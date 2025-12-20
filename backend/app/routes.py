@@ -1,6 +1,7 @@
 from .models import User
 
 users = {}
+jobs = {}
 
 from flask import Blueprint, render_template, request, session
 
@@ -20,12 +21,23 @@ def add_job():
     if "user" not in session:
         return "Unauthorized. Please login first."
 
+    username = session["user"]
+
     if request.method == "POST":
         company = request.form.get("company")
         status = request.form.get("status")
 
         if not company or not status:
             return "All fields are required"
+
+        # initialize job list for user if not exists
+        if username not in jobs:
+            jobs[username] = []
+
+        jobs[username].append({
+            "company": company,
+            "status": status
+        })
 
         return render_template(
             "result.html",
@@ -34,6 +46,21 @@ def add_job():
         )
 
     return render_template("add_job.html")
+
+
+@main.route("/my-jobs")
+def my_jobs():
+    if "user" not in session:
+        return "Unauthorized. Please login first."
+
+    username = session["user"]
+    user_jobs = jobs.get(username, [])
+
+    return render_template(
+        "my_jobs.html",
+        jobs=user_jobs
+    )
+
 
         
 
