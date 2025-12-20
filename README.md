@@ -10,4 +10,4 @@ A web application to track job applications, statuses, and progress.
 
 ## Goal
 To build and deploy a real backend project for MNC readiness.
-
+  
