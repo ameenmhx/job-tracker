@@ -1,7 +1,8 @@
+from .db import get_db_connection
+
+
 from .models import User
 
-users = {}
-jobs = {}
 
 from flask import Blueprint, render_template, request, session
 
@@ -18,26 +19,20 @@ def status():
 
 @main.route("/add-job", methods=["GET", "POST"])
 def add_job():
-    if "user" not in session:
-        return "Unauthorized. Please login first."
-
-    username = session["user"]
+    if "user_id" not in session:
+        return "Unauthorized"
 
     if request.method == "POST":
         company = request.form.get("company")
         status = request.form.get("status")
 
-        if not company or not status:
-            return "All fields are required"
-
-        # initialize job list for user if not exists
-        if username not in jobs:
-            jobs[username] = []
-
-        jobs[username].append({
-            "company": company,
-            "status": status
-        })
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO jobs (user_id, company, status) VALUES (?, ?, ?)",
+            (session["user_id"], company, status)
+        )
+        conn.commit()
+        conn.close()
 
         return render_template(
             "result.html",
@@ -48,21 +43,21 @@ def add_job():
     return render_template("add_job.html")
 
 
+
 @main.route("/my-jobs")
 def my_jobs():
-    if "user" not in session:
-        return "Unauthorized. Please login first."
+    if "user_id" not in session:
+        return "Unauthorized"
 
-    username = session["user"]
-    user_jobs = jobs.get(username, [])
+    conn = get_db_connection()
+    jobs = conn.execute(
+        "SELECT company, status FROM jobs WHERE user_id = ?",
+        (session["user_id"],)
+    ).fetchall()
+    conn.close()
 
-    return render_template(
-        "my_jobs.html",
-        jobs=user_jobs
-    )
+    return render_template("my_jobs.html", jobs=jobs)
 
-
-        
 
 @main.route("/register", methods=["GET", "POST"])
 def register():
@@ -73,13 +68,27 @@ def register():
         if not username or not password:
             return "All fields required"
 
-        if username in users:
-            return "User already exists"
+        from werkzeug.security import generate_password_hash
+        password_hash = generate_password_hash(password)
 
-        users[username] = User(username, password)
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+                (username, password_hash)
+            )
+            conn.commit()
+        except:
+            return "User already exists"
+        finally:
+            conn.close()
+
         return "User registered successfully"
 
     return render_template("register.html")
+
 
 @main.route("/login", methods=["GET", "POST"])
 def login():
@@ -87,20 +96,27 @@ def login():
         username = request.form.get("username")
         password = request.form.get("password")
 
-        if not username or not password:
-            return "All fields required"
+        conn = get_db_connection()
+        user = conn.execute(
+            "SELECT * FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+        conn.close()
 
-        user = users.get(username)
-
-        if not user or not user.check_password(password):
+        if not user:
             return "Invalid username or password"
 
-        # SESSION STARTS HERE
-        session["user"] = username
+        from werkzeug.security import check_password_hash
+        if not check_password_hash(user["password_hash"], password):
+            return "Invalid username or password"
 
-        return f"Welcome, {username}! You are now logged in."
+        session["user_id"] = user["id"]
+        session["username"] = user["username"]
+
+        return "Login successful"
 
     return render_template("login.html")
+
 
 @main.route("/logout")
 def logout():
