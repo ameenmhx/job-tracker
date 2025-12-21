@@ -49,14 +49,28 @@ def my_jobs():
     if "user_id" not in session:
         return "Unauthorized"
 
+    status = request.args.get("status")
+    search = request.args.get("search")
+
     conn = get_db_connection()
-    jobs = conn.execute(
-        "SELECT id, company, status FROM jobs WHERE user_id = ?",
-        (session["user_id"],)
-    ).fetchall()
+
+    query = "SELECT id, company, status FROM jobs WHERE user_id = ?"
+    params = [session["user_id"]]
+
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+
+    if search:
+        query += " AND company LIKE ?"
+        params.append(f"%{search}%")
+
+    jobs = conn.execute(query, params).fetchall()
     conn.close()
 
     return render_template("my_jobs.html", jobs=jobs)
+
+
 
 @main.route("/edit-job/<int:job_id>", methods=["GET", "POST"])
 def edit_job(job_id):
@@ -164,6 +178,44 @@ def login():
         return "Login successful"
 
     return render_template("login.html")
+
+@main.route("/dashboard")
+def dashboard():
+    if "user_id" not in session:
+        return "Unauthorized"
+
+    conn = get_db_connection()
+
+    total = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ?",
+        (session["user_id"],)
+    ).fetchone()[0]
+
+    applied = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Applied'",
+        (session["user_id"],)
+    ).fetchone()[0]
+
+    interview = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Interview'",
+        (session["user_id"],)
+    ).fetchone()[0]
+
+    rejected = conn.execute(
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Rejected'",
+        (session["user_id"],)
+    ).fetchone()[0]
+
+    conn.close()
+
+    return render_template(
+        "dashboard.html",
+        total=total,
+        applied=applied,
+        interview=interview,
+        rejected=rejected
+    )
+
 
 
 @main.route("/logout")
