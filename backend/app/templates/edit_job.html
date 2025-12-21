@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Edit Job</title>
+</head>
+<body>
+    <h2>Edit Job</h2>
+
+    <p>Company: {{ job.company }}</p>
+
+    <form method="POST">
+        <label>Status:</label><br>
+        <input type="text" name="status" value="{{ job.status }}"><br><br>
+
+        <button type="submit">Update</button>
+    </form>
+
+    <a href="/my-jobs">Back</a>
+</body>
+</html>

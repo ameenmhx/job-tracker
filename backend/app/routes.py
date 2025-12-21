@@ -4,7 +4,7 @@ from .db import get_db_connection
 from .models import User
 
 
-from flask import Blueprint, render_template, request, session
+from flask import Blueprint, render_template, request, session, redirect
 
 
 main = Blueprint("main", __name__)
@@ -51,12 +51,60 @@ def my_jobs():
 
     conn = get_db_connection()
     jobs = conn.execute(
-        "SELECT company, status FROM jobs WHERE user_id = ?",
+        "SELECT id, company, status FROM jobs WHERE user_id = ?",
         (session["user_id"],)
     ).fetchall()
     conn.close()
 
     return render_template("my_jobs.html", jobs=jobs)
+
+@main.route("/edit-job/<int:job_id>", methods=["GET", "POST"])
+def edit_job(job_id):
+    if "user_id" not in session:
+        return "Unauthorized"
+
+    conn = get_db_connection()
+
+    if request.method == "POST":
+        new_status = request.form.get("status")
+
+        conn.execute(
+            "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
+            (new_status, job_id, session["user_id"])
+        )
+        conn.commit()
+        conn.close()
+
+        return redirect("/my-jobs")
+
+    job = conn.execute(
+        "SELECT id, company, status FROM jobs WHERE id = ? AND user_id = ?",
+        (job_id, session["user_id"])
+    ).fetchone()
+    conn.close()
+
+    if not job:
+        return "Job not found"
+
+    return render_template("edit_job.html", job=job)
+
+@main.route("/delete-job/<int:job_id>")
+def delete_job(job_id):
+    if "user_id" not in session:
+        return "Unauthorized"
+
+    conn = get_db_connection()
+    conn.execute(
+        "DELETE FROM jobs WHERE id = ? AND user_id = ?",
+        (job_id, session["user_id"])
+    )
+    conn.commit()
+    conn.close()
+
+    return redirect("/my-jobs")
+
+
+
 
 
 @main.route("/register", methods=["GET", "POST"])

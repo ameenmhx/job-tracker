@@ -11,6 +11,9 @@
         {% for job in jobs %}
             <li>
                 {{ job.company }} — {{ job.status }}
+
+                <a href="/edit-job/{{ job.id }}">Edit</a>
+                <a href="/delete-job/{{ job.id }}">Delete</a>
             </li>
         {% endfor %}
         </ul>
