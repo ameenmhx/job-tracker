@@ -20,11 +20,17 @@ def status():
 @main.route("/add-job", methods=["GET", "POST"])
 def add_job():
     if "user_id" not in session:
-        return "Unauthorized"
+        return redirect("/login")
 
     if request.method == "POST":
-        company = request.form.get("company")
-        status = request.form.get("status")
+        company = request.form.get("company", "").strip()
+        status = request.form.get("status", "").strip()
+
+        if not company:
+            return "Company name cannot be empty"
+
+        if status not in ["Applied", "Interview", "Rejected"]:
+            return "Invalid status"
 
         conn = get_db_connection()
         conn.execute(
@@ -34,13 +40,10 @@ def add_job():
         conn.commit()
         conn.close()
 
-        return render_template(
-            "result.html",
-            company=company,
-            status=status
-        )
+        return redirect("/my-jobs")
 
     return render_template("add_job.html")
+
 
 
 
@@ -75,12 +78,26 @@ def my_jobs():
 @main.route("/edit-job/<int:job_id>", methods=["GET", "POST"])
 def edit_job(job_id):
     if "user_id" not in session:
-        return "Unauthorized"
+        return redirect("/login")
 
     conn = get_db_connection()
 
+    # Fetch job and ensure ownership
+    job = conn.execute(
+        "SELECT id, company, status FROM jobs WHERE id = ? AND user_id = ?",
+        (job_id, session["user_id"])
+    ).fetchone()
+
+    if not job:
+        conn.close()
+        return "Job not found or not authorized"
+
     if request.method == "POST":
-        new_status = request.form.get("status")
+        new_status = request.form.get("status", "").strip()
+
+        if new_status not in ["Applied", "Interview", "Rejected"]:
+            conn.close()
+            return "Invalid status"
 
         conn.execute(
             "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
@@ -91,31 +108,28 @@ def edit_job(job_id):
 
         return redirect("/my-jobs")
 
-    job = conn.execute(
-        "SELECT id, company, status FROM jobs WHERE id = ? AND user_id = ?",
-        (job_id, session["user_id"])
-    ).fetchone()
     conn.close()
-
-    if not job:
-        return "Job not found"
-
     return render_template("edit_job.html", job=job)
+
 
 @main.route("/delete-job/<int:job_id>")
 def delete_job(job_id):
     if "user_id" not in session:
-        return "Unauthorized"
+        return redirect("/login")
 
     conn = get_db_connection()
-    conn.execute(
+    cursor = conn.execute(
         "DELETE FROM jobs WHERE id = ? AND user_id = ?",
         (job_id, session["user_id"])
     )
     conn.commit()
     conn.close()
 
+    if cursor.rowcount == 0:
+        return "Job not found or not authorized"
+
     return redirect("/my-jobs")
+
 
 
 
@@ -182,7 +196,7 @@ def login():
 @main.route("/dashboard")
 def dashboard():
     if "user_id" not in session:
-        return "Unauthorized"
+        return redirect("/login")
 
     conn = get_db_connection()
 
@@ -192,18 +206,18 @@ def dashboard():
     ).fetchone()[0]
 
     applied = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Applied'",
-        (session["user_id"],)
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = ?",
+        (session["user_id"], "Applied")
     ).fetchone()[0]
 
     interview = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Interview'",
-        (session["user_id"],)
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = ?",
+        (session["user_id"], "Interview")
     ).fetchone()[0]
 
     rejected = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = 'Rejected'",
-        (session["user_id"],)
+        "SELECT COUNT(*) FROM jobs WHERE user_id = ? AND status = ?",
+        (session["user_id"], "Rejected")
     ).fetchone()[0]
 
     conn.close()
@@ -215,6 +229,7 @@ def dashboard():
         interview=interview,
         rejected=rejected
     )
+
 
 
 
