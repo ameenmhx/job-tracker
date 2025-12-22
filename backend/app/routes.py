@@ -1,10 +1,12 @@
-from .db import get_db_connection
+PER_PAGE = 5
+
 
 
 from .models import User
 
 
 from flask import Blueprint, render_template, request, session, redirect
+from .db import get_db_connection
 
 
 main = Blueprint("main", __name__)
@@ -50,13 +52,18 @@ def add_job():
 @main.route("/my-jobs")
 def my_jobs():
     if "user_id" not in session:
-        return "Unauthorized"
+        return redirect("/login")
 
+    # Read query parameters
     status = request.args.get("status")
     search = request.args.get("search")
+    page = request.args.get("page", 1, type=int)
+
+    offset = (page - 1) * PER_PAGE
 
     conn = get_db_connection()
 
+    # ---------- MAIN QUERY ----------
     query = "SELECT id, company, status FROM jobs WHERE user_id = ?"
     params = [session["user_id"]]
 
@@ -68,8 +75,36 @@ def my_jobs():
         query += " AND company LIKE ?"
         params.append(f"%{search}%")
 
+    query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    params.extend([PER_PAGE, offset])
+
     jobs = conn.execute(query, params).fetchall()
+
+    # ---------- COUNT QUERY ----------
+    count_query = "SELECT COUNT(*) FROM jobs WHERE user_id = ?"
+    count_params = [session["user_id"]]
+
+    if status:
+        count_query += " AND status = ?"
+        count_params.append(status)
+
+    if search:
+        count_query += " AND company LIKE ?"
+        count_params.append(f"%{search}%")
+
+    total_jobs = conn.execute(count_query, count_params).fetchone()[0]
+    total_pages = (total_jobs + PER_PAGE - 1) // PER_PAGE
+
     conn.close()
+
+    return render_template(
+        "my_jobs.html",
+        jobs=jobs,
+        page=page,
+        total_pages=total_pages,
+        status=status,
+        search=search
+    )
 
     return render_template("my_jobs.html", jobs=jobs)
 

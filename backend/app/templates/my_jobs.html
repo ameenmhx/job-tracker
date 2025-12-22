@@ -34,5 +34,23 @@
 
     <a href="/add-job">Add Job</a><br>
     <a href="/logout">Logout</a>
+
+
+    <div>
+    {% if page > 1 %}
+        <a href="?page={{ page-1 }}{% if status %}&status={{ status }}{% endif %}{% if search %}&search={{ search }}{% endif %}">
+            Previous
+        </a>
+    {% endif %}
+
+    Page {{ page }} of {{ total_pages }}
+
+    {% if page < total_pages %}
+        <a href="?page={{ page+1 }}{% if status %}&status={{ status }}{% endif %}{% if search %}&search={{ search }}{% endif %}">
+            Next
+        </a>
+    {% endif %}
+</div>
+
 </body>
 </html>
