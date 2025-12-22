@@ -1,202 +1,47 @@
-PER_PAGE = 5
-
-
-
-from .models import User
-
-
 from flask import Blueprint, render_template, request, session, redirect
-from .db import get_db_connection
+from werkzeug.security import generate_password_hash, check_password_hash
 
+from .db import get_db_connection
+from .logger import logger
 
 main = Blueprint("main", __name__)
 
+PER_PAGE = 5
+
+
 @main.route("/")
 def home():
-    return "Job Tracker Backend Running"
-
-@main.route("/status")
-def status():
-    return "server is healthy"
-
-@main.route("/add-job", methods=["GET", "POST"])
-def add_job():
-    if "user_id" not in session:
-        return redirect("/login")
-
-    if request.method == "POST":
-        company = request.form.get("company", "").strip()
-        status = request.form.get("status", "").strip()
-
-        if not company:
-            return "Company name cannot be empty"
-
-        if status not in ["Applied", "Interview", "Rejected"]:
-            return "Invalid status"
-
-        conn = get_db_connection()
-        conn.execute(
-            "INSERT INTO jobs (user_id, company, status) VALUES (?, ?, ?)",
-            (session["user_id"], company, status)
-        )
-        conn.commit()
-        conn.close()
-
-        return redirect("/my-jobs")
-
-    return render_template("add_job.html")
+    return redirect("/dashboard")
 
 
-
-
-@main.route("/my-jobs")
-def my_jobs():
-    if "user_id" not in session:
-        return redirect("/login")
-
-    # Read query parameters
-    status = request.args.get("status")
-    search = request.args.get("search")
-    page = request.args.get("page", 1, type=int)
-
-    offset = (page - 1) * PER_PAGE
-
-    conn = get_db_connection()
-
-    # ---------- MAIN QUERY ----------
-    query = "SELECT id, company, status FROM jobs WHERE user_id = ?"
-    params = [session["user_id"]]
-
-    if status:
-        query += " AND status = ?"
-        params.append(status)
-
-    if search:
-        query += " AND company LIKE ?"
-        params.append(f"%{search}%")
-
-    query += " ORDER BY id DESC LIMIT ? OFFSET ?"
-    params.extend([PER_PAGE, offset])
-
-    jobs = conn.execute(query, params).fetchall()
-
-    # ---------- COUNT QUERY ----------
-    count_query = "SELECT COUNT(*) FROM jobs WHERE user_id = ?"
-    count_params = [session["user_id"]]
-
-    if status:
-        count_query += " AND status = ?"
-        count_params.append(status)
-
-    if search:
-        count_query += " AND company LIKE ?"
-        count_params.append(f"%{search}%")
-
-    total_jobs = conn.execute(count_query, count_params).fetchone()[0]
-    total_pages = (total_jobs + PER_PAGE - 1) // PER_PAGE
-
-    conn.close()
-
-    return render_template(
-        "my_jobs.html",
-        jobs=jobs,
-        page=page,
-        total_pages=total_pages,
-        status=status,
-        search=search
-    )
-
-    return render_template("my_jobs.html", jobs=jobs)
-
-
-
-@main.route("/edit-job/<int:job_id>", methods=["GET", "POST"])
-def edit_job(job_id):
-    if "user_id" not in session:
-        return redirect("/login")
-
-    conn = get_db_connection()
-
-    # Fetch job and ensure ownership
-    job = conn.execute(
-        "SELECT id, company, status FROM jobs WHERE id = ? AND user_id = ?",
-        (job_id, session["user_id"])
-    ).fetchone()
-
-    if not job:
-        conn.close()
-        return "Job not found or not authorized"
-
-    if request.method == "POST":
-        new_status = request.form.get("status", "").strip()
-
-        if new_status not in ["Applied", "Interview", "Rejected"]:
-            conn.close()
-            return "Invalid status"
-
-        conn.execute(
-            "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
-            (new_status, job_id, session["user_id"])
-        )
-        conn.commit()
-        conn.close()
-
-        return redirect("/my-jobs")
-
-    conn.close()
-    return render_template("edit_job.html", job=job)
-
-
-@main.route("/delete-job/<int:job_id>")
-def delete_job(job_id):
-    if "user_id" not in session:
-        return redirect("/login")
-
-    conn = get_db_connection()
-    cursor = conn.execute(
-        "DELETE FROM jobs WHERE id = ? AND user_id = ?",
-        (job_id, session["user_id"])
-    )
-    conn.commit()
-    conn.close()
-
-    if cursor.rowcount == 0:
-        return "Job not found or not authorized"
-
-    return redirect("/my-jobs")
-
-
-
-
-
+# ---------------- AUTH ----------------
 
 @main.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
 
         if not username or not password:
             return "All fields required"
 
-        from werkzeug.security import generate_password_hash
         password_hash = generate_password_hash(password)
 
         conn = get_db_connection()
-        cursor = conn.cursor()
-
         try:
-            cursor.execute(
+            conn.execute(
                 "INSERT INTO users (username, password_hash) VALUES (?, ?)",
                 (username, password_hash)
             )
             conn.commit()
-        except:
+            logger.info(f"New user registered: {username}")
+        except Exception:
+            logger.error("User registration failed", exc_info=True)
             return "User already exists"
         finally:
             conn.close()
 
-        return "User registered successfully"
+        return redirect("/login")
 
     return render_template("register.html")
 
@@ -204,8 +49,8 @@ def register():
 @main.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
 
         conn = get_db_connection()
         user = conn.execute(
@@ -214,19 +59,27 @@ def login():
         ).fetchone()
         conn.close()
 
-        if not user:
-            return "Invalid username or password"
-
-        from werkzeug.security import check_password_hash
-        if not check_password_hash(user["password_hash"], password):
+        if not user or not check_password_hash(user["password_hash"], password):
+            logger.warning(f"Failed login attempt for user: {username}")
             return "Invalid username or password"
 
         session["user_id"] = user["id"]
         session["username"] = user["username"]
 
-        return "Login successful"
+        logger.info(f"User logged in: {username}")
+        return redirect("/dashboard")
 
     return render_template("login.html")
+
+
+@main.route("/logout")
+def logout():
+    logger.info(f"User logged out: {session.get('username')}")
+    session.clear()
+    return redirect("/login")
+
+
+# ---------------- DASHBOARD ----------------
 
 @main.route("/dashboard")
 def dashboard():
@@ -266,21 +119,155 @@ def dashboard():
     )
 
 
+# ---------------- JOBS ----------------
 
+@main.route("/add-job", methods=["GET", "POST"])
+def add_job():
+    if "user_id" not in session:
+        return redirect("/login")
 
-@main.route("/logout")
-def logout():
-    session.pop("user", None)
-    return "You have been logged out"
+    if request.method == "POST":
+        company = request.form.get("company", "").strip()
+        status = request.form.get("status", "").strip()
 
+        if not company:
+            return "Company name cannot be empty"
 
+        if status not in ["Applied", "Interview", "Rejected"]:
+            return "Invalid status"
 
+        conn = get_db_connection()
+        try:
+            conn.execute(
+                "INSERT INTO jobs (user_id, company, status) VALUES (?, ?, ?)",
+                (session["user_id"], company, status)
+            )
+            conn.commit()
+            logger.info(
+                f"Job added | user_id={session['user_id']} | company={company} | status={status}"
+            )
+        except Exception:
+            logger.error("Failed to add job", exc_info=True)
+            return "Internal server error"
+        finally:
+            conn.close()
 
-
-    return render_template(
-            "result.html",
-            company=company,
-            status=status
-        )
+        return redirect("/my-jobs")
 
     return render_template("add_job.html")
+
+
+@main.route("/my-jobs")
+def my_jobs():
+    if "user_id" not in session:
+        return redirect("/login")
+
+    status = request.args.get("status")
+    search = request.args.get("search")
+    page = request.args.get("page", 1, type=int)
+    offset = (page - 1) * PER_PAGE
+
+    conn = get_db_connection()
+
+    query = "SELECT id, company, status FROM jobs WHERE user_id = ?"
+    params = [session["user_id"]]
+
+    if status:
+        query += " AND status = ?"
+        params.append(status)
+
+    if search:
+        query += " AND company LIKE ?"
+        params.append(f"%{search}%")
+
+    query += " ORDER BY id DESC LIMIT ? OFFSET ?"
+    params.extend([PER_PAGE, offset])
+
+    jobs = conn.execute(query, params).fetchall()
+
+    count_query = "SELECT COUNT(*) FROM jobs WHERE user_id = ?"
+    count_params = [session["user_id"]]
+
+    if status:
+        count_query += " AND status = ?"
+        count_params.append(status)
+
+    if search:
+        count_query += " AND company LIKE ?"
+        count_params.append(f"%{search}%")
+
+    total_jobs = conn.execute(count_query, count_params).fetchone()[0]
+    total_pages = (total_jobs + PER_PAGE - 1) // PER_PAGE
+
+    conn.close()
+
+    return render_template(
+        "my_jobs.html",
+        jobs=jobs,
+        page=page,
+        total_pages=total_pages,
+        status=status,
+        search=search
+    )
+
+
+@main.route("/edit-job/<int:job_id>", methods=["GET", "POST"])
+def edit_job(job_id):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    conn = get_db_connection()
+
+    job = conn.execute(
+        "SELECT * FROM jobs WHERE id = ? AND user_id = ?",
+        (job_id, session["user_id"])
+    ).fetchone()
+
+    if not job:
+        conn.close()
+        return "Job not found or not authorized"
+
+    if request.method == "POST":
+        new_status = request.form.get("status", "").strip()
+
+        if new_status not in ["Applied", "Interview", "Rejected"]:
+            conn.close()
+            return "Invalid status"
+
+        conn.execute(
+            "UPDATE jobs SET status = ? WHERE id = ? AND user_id = ?",
+            (new_status, job_id, session["user_id"])
+        )
+        conn.commit()
+        logger.info(
+            f"Job updated | user_id={session['user_id']} | job_id={job_id} | status={new_status}"
+        )
+        conn.close()
+
+        return redirect("/my-jobs")
+
+    conn.close()
+    return render_template("edit_job.html", job=job)
+
+
+@main.route("/delete-job/<int:job_id>")
+def delete_job(job_id):
+    if "user_id" not in session:
+        return redirect("/login")
+
+    conn = get_db_connection()
+    cursor = conn.execute(
+        "DELETE FROM jobs WHERE id = ? AND user_id = ?",
+        (job_id, session["user_id"])
+    )
+    conn.commit()
+    conn.close()
+
+    if cursor.rowcount == 0:
+        return "Job not found or not authorized"
+
+    logger.warning(
+        f"Job deleted | user_id={session['user_id']} | job_id={job_id}"
+    )
+
+    return redirect("/my-jobs")
